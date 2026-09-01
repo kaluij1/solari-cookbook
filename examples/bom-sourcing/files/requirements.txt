@@ -1,0 +1,2 @@
+solari-browser>=0.1.2
+anthropic>=0.40.0
