@@ -20,6 +20,7 @@ _workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
 _extra_headers = {"anthropic-workspace-id": _workspace_id} if _workspace_id else {}
 
 _client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], default_headers=_extra_headers)
+
 _SYSTEM_PROMPT = """\
 You extract structured pricing data from a supplier's search-results page for \
 one specific part a buyer is trying to source. You are given the part \
@@ -37,7 +38,9 @@ Respond with ONLY a JSON object, no other text, matching this shape:
   "lead_time_days": integer or null (estimate from stock/ship-date text if a
     specific number isn't stated; use 0 for "in stock, ships today"),
   "in_stock": true, false, or null if unknown,
-  "confidence": "high", "medium", or "low"
+  "confidence": "high", "medium", or "low",
+  "reasoning": "one sentence on why this is/isn't a match, or why nothing
+    on the page qualifies"
 }
 """
 
@@ -51,6 +54,7 @@ class Quote:
     lead_time_days: int | None
     in_stock: bool | None
     confidence: str
+    reasoning: str = ""
 
 
 def extract_quote(
@@ -95,6 +99,7 @@ def extract_quote(
             lead_time_days=None,
             in_stock=None,
             confidence="low",
+            reasoning="Model response wasn't valid JSON; treating as no match.",
         )
 
     return Quote(
@@ -105,4 +110,5 @@ def extract_quote(
         lead_time_days=data.get("lead_time_days"),
         in_stock=data.get("in_stock"),
         confidence=data.get("confidence", "low"),
+        reasoning=data.get("reasoning", ""),
     )

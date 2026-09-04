@@ -26,7 +26,7 @@ MAX_CONCURRENT_SESSIONS = 2
 _session_slots = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
 
 
-def _failed_quote(supplier_name: str) -> Quote:
+def _failed_quote(supplier_name: str, reason: str) -> Quote:
     return Quote(
         supplier=supplier_name,
         matched=False,
@@ -35,6 +35,7 @@ def _failed_quote(supplier_name: str) -> Quote:
         lead_time_days=None,
         in_stock=None,
         confidence="low",
+        reasoning=reason,
     )
 
 
@@ -49,34 +50,45 @@ async def fetch_quote(solari: Solari, supplier: Supplier, part_description: str)
             # hang: without it, a session stuck negotiating a connection
             # (e.g. because the account is momentarily at its concurrency
             # cap) blocks forever rather than failing fast.
+            # McMaster-Carr, Grainger, and DigiKey all show some form of bot
+            # detection to plain datacenter traffic (Cloudflare/Akamai
+            # challenge pages, or a JS-heavy site quietly refusing to run
+            # search for a non-human-looking session). stealth + a
+            # residential proxy is Solari's fix for this pairing — see
+            # browser-stealth-proxy-ts in this cookbook for the underlying
+            # mechanism.
             browser = await asyncio.wait_for(
-                solari.launch(stealth=True, proxy="us"), timeout=LAUNCH_TIMEOUT_SECONDS
+                solari.launch(stealth=True),
+                timeout=LAUNCH_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
+            reason = f"Session launch timed out after {LAUNCH_TIMEOUT_SECONDS}s."
             print(f"  [{supplier.name}] launch timed out after {LAUNCH_TIMEOUT_SECONDS}s")
-            return _failed_quote(supplier.name)
+            return _failed_quote(supplier.name, reason)
         except Exception as exc:  # noqa: BLE001 - e.g. 429 ConcurrencyLimitExceeded
             print(f"  [{supplier.name}] launch failed: {exc}")
-            return _failed_quote(supplier.name)
+            return _failed_quote(supplier.name, f"Session launch failed: {exc}")
 
         try:
             page = await browser.new_page()
             try:
-                await page.goto(url, timeout=PAGE_LOAD_TIMEOUT_MS)
-                # Give client-rendered result grids a moment to populate. A
-                # fixed sleep is crude but keeps this example
-                # dependency-free; a production version would wait on a
-                # results-container selector per supplier instead.
-                await asyncio.sleep(3)
+                # "load" waits for every resource on the page (ads,
+                # trackers, everything) and can simply never fire on a
+                # heavy site, especially through a proxy. domcontentloaded
+                # fires once the page's core content exists, which is what
+                # we actually need before reading its text.
+                await page.goto(url, timeout=PAGE_LOAD_TIMEOUT_MS, wait_until="domcontentloaded")
+                # Give client-rendered result grids time to populate. Bumped
+                # from 3s after seeing Grainger's product cards render
+                # inconsistently within that window. A fixed sleep is crude
+                # but keeps this example dependency-free; a production
+                # version would wait on a results-container selector per
+                # supplier instead.
+                await asyncio.sleep(6)
                 page_text = await page.locator("body").inner_text()
-                
-                # TEMP DEBUG: see what the browser actually loaded. Remove
-                # once matching is working reliably.
-                print(f"  [{supplier.name}] page text length: {len(page_text)}")
-                print(f"  [{supplier.name}] first 300 chars: {page_text[:300]!r}")
             except Exception as exc:  # noqa: BLE001 - surface as a failed quote, not a crash
                 print(f"  [{supplier.name}] page load failed: {exc}")
-                return _failed_quote(supplier.name)
+                return _failed_quote(supplier.name, f"Page load failed: {exc}")
         finally:
             # `close()` also releases the session — skipping this leaves the
             # slot held until the plan's idle timeout for no reason.

@@ -1,0 +1,119 @@
+warning: in the working copy of 'examples/bom-sourcing/agent.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/examples/bom-sourcing/agent.py b/examples/bom-sourcing/agent.py[m
+[1mindex 7a02380..5ab9295 100644[m
+[1m--- a/examples/bom-sourcing/agent.py[m
+[1m+++ b/examples/bom-sourcing/agent.py[m
+[36m@@ -15,38 +15,72 @@[m [mfrom extract import Quote, extract_quote[m
+ from suppliers import Supplier[m
+ [m
+ PAGE_LOAD_TIMEOUT_MS = 20_000[m
+[32m+[m[32mLAUNCH_TIMEOUT_SECONDS = 30[m
+[32m+[m
+[32m+[m[32m# Free-tier Solari accounts cap concurrent sessions at 3 (see the[m
+[32m+[m[32m# ConcurrencyLimitExceeded error if you ever hit it). Stay comfortably under[m
+[32m+[m[32m# that so a slow-to-close session from a previous part doesn't cause a[m
+[32m+[m[32m# spurious 429 here. Raise this if your plan supports more.[m
+[32m+[m[32mMAX_CONCURRENT_SESSIONS = 2[m
+[32m+[m
+[32m+[m[32m_session_slots = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef _failed_quote(supplier_name: str) -> Quote:[m
+[32m+[m[32m    return Quote([m
+[32m+[m[32m        supplier=supplier_name,[m
+[32m+[m[32m        matched=False,[m
+[32m+[m[32m        product_name=None,[m
+[32m+[m[32m        unit_price_usd=None,[m
+[32m+[m[32m        lead_time_days=None,[m
+[32m+[m[32m        in_stock=None,[m
+[32m+[m[32m        confidence="low",[m
+[32m+[m[32m    )[m
+ [m
+ [m
+ async def fetch_quote(solari: Solari, supplier: Supplier, part_description: str) -> Quote:[m
+     """Search one supplier for one part and return a structured quote."""[m
+ [m
+     url = supplier.search_url(part_description)[m
+[31m-    browser = await solari.launch()[m
+[31m-    try:[m
+[31m-        page = await browser.new_page()[m
+[32m+[m
+[32m+[m[32m    async with _session_slots:[m
+         try:[m
+[31m-            await page.goto(url, timeout=PAGE_LOAD_TIMEOUT_MS)[m
+[31m-            # Give client-rendered result grids a moment to populate. A fixed[m
+[31m-            # sleep is crude but keeps this example dependency-free; a[m
+[31m-            # production version would wait on a results-container selector[m
+[31m-            # per supplier instead.[m
+[31m-            await asyncio.sleep(3)[m
+[31m-            page_text = await page.locator("body").inner_text()[m
+[31m-        except Exception as exc:  # noqa: BLE001 - surface as a failed quote, not a crash[m
+[31m-            print(f"  [{supplier.name}] page load failed: {exc}")[m
+[31m-            return Quote([m
+[31m-                supplier=supplier.name,[m
+[31m-                matched=False,[m
+[31m-                product_name=None,[m
+[31m-                unit_price_usd=None,[m
+[31m-                lead_time_days=None,[m
+[31m-                in_stock=None,[m
+[31m-                confidence="low",[m
+[32m+[m[32m            # A hard timeout here is what actually prevents an indefinite[m
+[32m+[m[32m            # hang: without it, a session stuck negotiating a connection[m
+[32m+[m[32m            # (e.g. because the account is momentarily at its concurrency[m
+[32m+[m[32m            # cap) blocks forever rather than failing fast.[m
+[32m+[m[32m            browser = await asyncio.wait_for([m
+[32m+[m[32m                solari.launch(stealth=True, proxy="us"), timeout=LAUNCH_TIMEOUT_SECONDS[m
+             )[m
+[31m-    finally:[m
+[31m-        # `close()` also releases the session — skipping this leaves the slot[m
+[31m-        # held until the plan's idle timeout for no reason.[m
+[31m-        await browser.close()[m
+[32m+[m[32m        except asyncio.TimeoutError:[m
+[32m+[m[32m            print(f"  [{supplier.name}] launch timed out after {LAUNCH_TIMEOUT_SECONDS}s")[m
+[32m+[m[32m            return _failed_quote(supplier.name)[m
+[32m+[m[32m        except Exception as exc:  # noqa: BLE001 - e.g. 429 ConcurrencyLimitExceeded[m
+[32m+[m[32m            print(f"  [{supplier.name}] launch failed: {exc}")[m
+[32m+[m[32m            return _failed_quote(supplier.name)[m
+[32m+[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            page = await browser.new_page()[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                await page.goto(url, timeout=PAGE_LOAD_TIMEOUT_MS)[m
+[32m+[m[32m                # Give client-rendered result grids a moment to populate. A[m
+[32m+[m[32m                # fixed sleep is crude but keeps this example[m
+[32m+[m[32m                # dependency-free; a production version would wait on a[m
+[32m+[m[32m                # results-container selector per supplier instead.[m
+[32m+[m[32m                await asyncio.sleep(3)[m
+[32m+[m[32m                page_text = await page.locator("body").inner_text()[m
+[32m+[m[41m                [m
+[32m+[m[32m                # TEMP DEBUG: see what the browser actually loaded. Remove[m
+[32m+[m[32m                # once matching is working reliably.[m
+[32m+[m[32m                print(f"  [{supplier.name}] page text length: {len(page_text)}")[m
+[32m+[m[32m                print(f"  [{supplier.name}] first 300 chars: {page_text[:300]!r}")[m
+[32m+[m[32m            except Exception as exc:  # noqa: BLE001 - surface as a failed quote, not a crash[m
+[32m+[m[32m                print(f"  [{supplier.name}] page load failed: {exc}")[m
+[32m+[m[32m                return _failed_quote(supplier.name)[m
+[32m+[m[32m        finally:[m
+[32m+[m[32m            # `close()` also releases the session — skipping this leaves the[m
+[32m+[m[32m            # slot held until the plan's idle timeout for no reason.[m
+[32m+[m[32m            await browser.close()[m
+ [m
+     return extract_quote([m
+         supplier_name=supplier.name,[m
+[36m@@ -59,8 +93,13 @@[m [masync def fetch_quote(solari: Solari, supplier: Supplier, part_description: str)[m
+ async def fetch_all_quotes([m
+     part_description: str, suppliers: list[Supplier][m
+ ) -> list[Quote]:[m
+[31m-    """Check every supplier for one part, concurrently."""[m
+[32m+[m[32m    """Check every supplier for one part.[m
+[32m+[m
+[32m+[m[32m    Session creation is throttled by the semaphore in fetch_quote, so this[m
+[32m+[m[32m    still runs suppliers concurrently up to MAX_CONCURRENT_SESSIONS at a[m
+[32m+[m[32m    time rather than one at a time.[m
+[32m+[m[32m    """[m
+ [m
+     solari = Solari(api_key=os.environ["SOLARI_API_KEY"])[m
+     tasks = [fetch_quote(solari, supplier, part_description) for supplier in suppliers][m
+[31m-    return await asyncio.gather(*tasks)[m
+[32m+[m[32m    return await asyncio.gather(*tasks)[m
+\ No newline at end of file[m
