@@ -12,8 +12,14 @@ from dataclasses import dataclass
 
 from anthropic import Anthropic
 
-_client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+# Identity-linked Console API keys (the kind created while logged in via
+# SSO/Google, scoped to a specific workspace) require the workspace to be
+# named on every request. Plain organization-level keys don't need this, so
+# the header is only added when ANTHROPIC_WORKSPACE_ID is actually set.
+_workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+_extra_headers = {"anthropic-workspace-id": _workspace_id} if _workspace_id else {}
 
+_client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], default_headers=_extra_headers)
 _SYSTEM_PROMPT = """\
 You extract structured pricing data from a supplier's search-results page for \
 one specific part a buyer is trying to source. You are given the part \
